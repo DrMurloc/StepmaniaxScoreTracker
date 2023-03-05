@@ -1,0 +1,69 @@
+﻿@page "/Login"
+@using ScoreTracker.Domain.SecondaryPorts
+
+<PageTitle>Login</PageTitle>
+
+<MudPaper Class="align-center" Elevation="0" MaxWidth="500px">
+    <MudContainer Fixed="true">
+        <MudCard>
+
+            <MudCardHeader>
+                <MudText Typo="Typo.h4" Color="Color.Primary">Login</MudText>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudContainer Fixed="true">
+                    <MudTooltip Text="Log In With Discord">
+                        <MudButton Href="/Login/Discord" StartIcon="@Icons.Custom.Brands.Discord" Variant="Variant.Filled" Style="@($"color:{Colors.Grey.Lighten5};background:{Colors.Indigo.Default};")">Discord</MudButton>
+                    </MudTooltip>
+                    <MudTooltip Text="Log In With Google">
+                        <MudButton Href="/Login/Google" StartIcon="@Icons.Custom.Brands.Google" Variant="Variant.Filled" Style="@($"color:{Colors.Grey.Lighten5};background:{Colors.Orange.Darken3};")">Google</MudButton>
+                    </MudTooltip>
+                    <MudTooltip Text="Log In With Facebook">
+                        <MudButton Href="/Login/Facebook" StartIcon="@Icons.Custom.Brands.Facebook" Variant="Variant.Filled" Style="@($"color:{Colors.Grey.Lighten5};background:{Colors.Blue.Darken1};")">Facebook</MudButton>
+                    </MudTooltip>
+                    </MudContainer>
+            </MudCardContent>
+            <MudCardActions>
+                <MudSpacer></MudSpacer>
+                <MudButton Variant="Variant.Text" Color="Color.Primary" OnClick="@(() => _isDialogVisible = true)">Account Creation?</MudButton>
+            </MudCardActions>
+        </MudCard>
+    </MudContainer>
+
+</MudPaper>
+
+<MudDialog @bind-IsVisible="_isDialogVisible">
+    <TitleContent>
+        Account Creation?
+    </TitleContent>
+    <DialogContent>
+        <p>
+            If you do not have an account with Score Tracker, one will be created when you select one of the login providers.
+            <br/><br/>
+            The only information stored about your account from the login provider you select is the external ID (typically a random number or combination of letters), and the username. You can change the username at any time after account creation.
+            <br/><br/>
+            No passwords are stored in Score Tracker, we don't want them, you don't want us to have them, everyone is happier this way.
+        </p>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" Color="Color.Primary" Href="/Privacy" Target="_blank">Full Privacy Policy</MudButton>
+        <MudButton Variant="Variant.Text" Color="Color.Primary" OnClick="@(() => _isDialogVisible = false)" Class="px-10">Close</MudButton>
+    </DialogActions>
+
+</MudDialog>
+
+@inject ICurrentUserAccessor CurrentUser;
+@inject NavigationManager NavManager
+@code
+{
+    private bool _isDialogVisible = false;
+    protected override async Task OnInitializedAsync()
+    {
+        if (CurrentUser.IsLoggedIn)
+        {
+            NavManager.NavigateTo("/Charts");
+            return;
+        }
+
+    }
+}

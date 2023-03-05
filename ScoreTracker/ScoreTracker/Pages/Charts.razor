@@ -1,0 +1,826 @@
+﻿@page "/{RequestedUserId:guid}/Charts"
+@page "/Charts"
+@using MediatR
+@using ScoreTracker.Application.Commands
+@using ScoreTracker.Application.Queries
+@using ScoreTracker.Domain.Enums
+@using ScoreTracker.Domain.Models
+@using ScoreTracker.Domain.Records
+@using ScoreTracker.Domain.SecondaryPorts
+@using ScoreTracker.Domain.ValueTypes
+@using ScoreTracker.Web.Dtos
+@using ChartType = ScoreTracker.Domain.Enums.ChartType;
+<PageTitle>Best Attempts</PageTitle>
+
+<MudGrid>
+    @if (FilterStatus(FilterEnum.Difficulty))
+    {
+        <MudItem xs="6" sm="4">
+            <MudSelect T="int?" AdornmentIcon="@Icons.Filled.Bolt" Label="Difficulty Level" Value="@DifficultyFilter" ValueChanged="DifficultyFilterChanged" Clearable="true" Disabled="ChartTypeFilter == ChartType.CoOp.ToString()">
+                @foreach (var level in Enumerable.Range(DifficultyLevel.Min, DifficultyLevel.Max))
+                {
+                    <MudSelectItem T="int?" Value="@level">@level</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+    }
+    @if (FilterStatus(FilterEnum.ChartType))
+    {
+        <MudItem xs="6" sm="4">
+            <MudSelect T="string" AdornmentIcon="@Icons.Filled.Category" Label="Chart Type" Value="ChartTypeFilter" ValueChanged="ChartTypeFilterChanged" Clearable="true">
+                @foreach (var type in Enum.GetValues<ChartType>())
+                {
+                    @if (type == ChartType.CoOp && DifficultyFilter != null)
+                    {
+                        continue;
+                    }
+                    <MudSelectItem T="string" Value="@type.ToString()">@type.ToString()</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+    }
+
+    @if (RequestedUserId != null)
+    {
+        @if (FilterStatus(FilterEnum.ScoreState))
+        {
+            
+            <MudItem xs="6" sm="4">
+                <MudSelect T="ScoreState?" AdornmentIcon="@Icons.Filled.Rule" Label="Score State" Value="_scoreStateFilter" ValueChanged="ScoreStateFilterChanged" Clearable="true">
+                    @foreach (var ss in Enum.GetValues<ScoreState>())
+                    {
+                        <MudSelectItem T="ScoreState?" Value="@ss">@ss.ToString()</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+        }
+        @if (FilterStatus(FilterEnum.SavedCharts))
+        {
+            <MudItem xs="6" sm="4">
+
+                <MudSelect T="string" AdornmentIcon="@Icons.Material.Filled.ListAlt" Label="Saved Charts" MultiSelection="true" SelectedValues="_chartListsFilter" SelectedValuesChanged="ChartListFilterChanged" Clearable="true">
+                    <MudSelectItem T="string" Value="@ChartListType.ToDo.ToString()">To Do</MudSelectItem>
+                    <MudSelectItem T="string" Value="@ChartListType.Favorite.ToString()">Favorites</MudSelectItem>
+
+                </MudSelect>
+            </MudItem>
+        }
+    }
+    @if (FilterStatus(FilterEnum.SongName))
+    {
+        <MudItem xs="12" sm="4">
+            
+            
+            <MudAutocomplete T="string"
+                             Value="SongNameFilter"
+                             ValueChanged="SongNameFilterChanged"
+                             AdornmentIcon="@Icons.Filled.Search"
+                             ResetValueOnEmptyText="true"
+                             Label="Song Name"
+                             Clearable="true"
+                             Adornment="Adornment.End"
+                             SearchFunc="@SearchSongs"
+                             Immediate="true"
+                             Variant="Variant.Text"
+                             CoerceText="true"
+                             CoerceValue="false"
+                             >
+
+            </MudAutocomplete>
+        </MudItem>
+    }
+</MudGrid>
+@if (RequestedUserId != null)
+{
+    <br/>
+    <MudChip Variant="Variant.Outlined" Size="Size.Small" OnClick="@(() => SetScoreStateFilter(ScoreState.Ungraded))">Not Graded: @NotGradedCount</MudChip>
+    <MudChip Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" OnClick="@(() => SetScoreStateFilter(ScoreState.NotPassed))">Not Passed: @NotPassedCount</MudChip>
+    <MudChip Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small" OnClick="@(() => SetScoreStateFilter(ScoreState.Passed))">Passed: @PassedCount</MudChip>
+    <br/>
+}
+<MudTable T="BestAttemptDto" Items="@_charts" Filter="FilterChart"  Loading="@_isLoading" Breakpoint="Breakpoint.None">
+    <ToolBarContent>
+        <MudText Typo="Typo.h6">Charts</MudText>
+        <MudSpacer></MudSpacer>
+        @if (CurrentUser.IsLoggedIn && CurrentUser.User.IsPublic && CurrentUser.User.Id == RequestedUserId)
+        {
+            <MudTooltip Text="Share Your Chart List">
+                <MudIconButton Icon="@Icons.Filled.Share" OnClick="()=>_showShareDialog=true"></MudIconButton>
+            </MudTooltip>
+        }
+        <MudTooltip Text="Filters">
+            <MudMenu Icon="@Icons.Material.Filled.FilterList" Dense="true">
+                <MudMenuItem Icon="@(FilterStatus(FilterEnum.Difficulty)?@Icons.Material.Filled.Check:string.Empty)" OnClick="@(_=>ToggleFilter(FilterEnum.Difficulty))">Difficulty</MudMenuItem>
+                <MudMenuItem Icon="@(FilterStatus(FilterEnum.ChartType)?@Icons.Material.Filled.Check:string.Empty)" OnClick="@(_=>ToggleFilter(FilterEnum.ChartType))">Chart Type</MudMenuItem>
+                <MudMenuItem Icon="@(FilterStatus(FilterEnum.SongName)?@Icons.Material.Filled.Check:string.Empty)" OnClick="@(_=>ToggleFilter(FilterEnum.SongName))">Song Name</MudMenuItem>
+                @if (CurrentUser.IsLoggedIn)
+                {
+                    <MudMenuItem Icon="@(FilterStatus(FilterEnum.ScoreState)?@Icons.Material.Filled.Check:string.Empty)" OnClick="@(_=>ToggleFilter(FilterEnum.ScoreState))">Score State</MudMenuItem>
+                    <MudMenuItem Icon="@(FilterStatus(FilterEnum.SavedCharts)?@Icons.Material.Filled.Check:string.Empty)" OnClick="@(_=>ToggleFilter(FilterEnum.SavedCharts))">Saved Charts</MudMenuItem>
+                }
+            </MudMenu>
+        </MudTooltip>
+        <MudTooltip Text="Columns">
+            <MudMenu Icon="@Icons.Material.Filled.ViewColumn" Dense="true">
+                <MudMenuItem Icon="@(ColumnStatus(ColumnEnum.Difficulty)?@Icons.Material.Filled.Check:string.Empty)" OnClick="@(_=>ToggleColumn(ColumnEnum.Difficulty))">Difficulty</MudMenuItem>
+                <MudMenuItem Icon="@(ColumnStatus(ColumnEnum.SongImage)?@Icons.Material.Filled.Check:string.Empty)" OnClick="@(_=>ToggleColumn(ColumnEnum.SongImage))">Song Image</MudMenuItem>
+                <MudMenuItem Icon="@(ColumnStatus(ColumnEnum.SongName)?@Icons.Material.Filled.Check:string.Empty)" OnClick="@(_=>ToggleColumn(ColumnEnum.SongName))">Song Name</MudMenuItem>
+                <MudMenuItem Icon="@(ColumnStatus(ColumnEnum.AdjustedRating)?@Icons.Material.Filled.Check:string.Empty)" OnClick="@(_=>ToggleColumn(ColumnEnum.AdjustedRating))">Adjusted Difficulty</MudMenuItem>
+                <MudMenuItem Icon="@(ColumnStatus(ColumnEnum.RatingCount)?@Icons.Material.Filled.Check:string.Empty)" OnClick="@(_=>ToggleColumn(ColumnEnum.RatingCount))">Rating Count</MudMenuItem>
+                <MudMenuItem Icon="@(ColumnStatus(ColumnEnum.StandardDeviation)?@Icons.Material.Filled.Check:string.Empty)" OnClick="@(_=>ToggleColumn(ColumnEnum.StandardDeviation))">Standard Deviation</MudMenuItem>
+                @if (CurrentUser.IsLoggedIn)
+                {
+                    
+                    <MudMenuItem Icon="@(ColumnStatus(ColumnEnum.MyRating)?@Icons.Material.Filled.Check:string.Empty)" OnClick="@(_=>ToggleColumn(ColumnEnum.MyRating))">My Difficulty Adjustments</MudMenuItem>
+
+                }
+                <MudMenuItem Icon="@(ColumnStatus(ColumnEnum.Video)?@Icons.Material.Filled.Check:string.Empty)" OnClick="@(_=>ToggleColumn(ColumnEnum.Video))">Video</MudMenuItem>
+
+                @if (RequestedUserId != null)
+                {                
+                    <MudMenuItem Icon="@(ColumnStatus(ColumnEnum.Grade)?@Icons.Material.Filled.Check:string.Empty)" OnClick="@(_=>ToggleColumn(ColumnEnum.Grade))">Letter Grade</MudMenuItem>
+                    <MudMenuItem Icon="@(ColumnStatus(ColumnEnum.Broken)?@Icons.Material.Filled.Check:string.Empty)" OnClick="@(_=>ToggleColumn(ColumnEnum.Broken))">Broken</MudMenuItem>
+                    <MudMenuItem Icon="@(ColumnStatus(ColumnEnum.Score)?@Icons.Material.Filled.Check:string.Empty)" OnClick="@(_=>ToggleColumn(ColumnEnum.Score))">Score</MudMenuItem>
+                    <MudMenuItem Icon="@(ColumnStatus(ColumnEnum.RecordedOn)?@Icons.Material.Filled.Check:string.Empty)" OnClick="@(_=>ToggleColumn(ColumnEnum.RecordedOn))">Recorded Date</MudMenuItem>
+                    <MudMenuItem Icon="@(ColumnStatus(ColumnEnum.Actions)?@Icons.Material.Filled.Check:string.Empty)" OnClick="@(_=>ToggleColumn(ColumnEnum.Actions))">Actions</MudMenuItem>
+
+                }
+            </MudMenu>
+        </MudTooltip>
+    </ToolBarContent>
+    <HeaderContent>
+        @if (ColumnStatus(ColumnEnum.Difficulty))
+        {
+            <MudTh><MudTableSortLabel T="BestAttemptDto" SortBy="e => e.Level">Level</MudTableSortLabel></MudTh>
+        }
+        @if (ColumnStatus(ColumnEnum.SongImage))
+        {
+            <MudTh><MudTableSortLabel T="BestAttemptDto" SortBy="e => e.SongName" InitialDirection="SortDirection.Ascending">Song Image</MudTableSortLabel></MudTh>
+        }
+        @if (ColumnStatus(ColumnEnum.SongName))
+        {
+            <MudTh><MudTableSortLabel T="BestAttemptDto" SortBy="e=>e.SongName">Song Name</MudTableSortLabel></MudTh>
+        }
+        @if (ColumnStatus(ColumnEnum.AdjustedRating))
+        {
+            <MudTh><MudTableSortLabel T="BestAttemptDto" SortBy="e=>_adjustedDifficulties[e.ChartId].Difficulty">Adjusted Difficulty</MudTableSortLabel></MudTh>
+        }
+        @if (ColumnStatus(ColumnEnum.RatingCount))
+        {
+            <MudTh><MudTableSortLabel T="BestAttemptDto" SortBy="e=>_adjustedDifficulties[e.ChartId].RatingCount">Rating Count</MudTableSortLabel></MudTh>
+        }
+        
+        @if (ColumnStatus(ColumnEnum.StandardDeviation))
+        {
+            <MudTh><MudTableSortLabel T="BestAttemptDto" SortBy="e=>_adjustedDifficulties[e.ChartId].StandardDeviation">Standard Deviation</MudTableSortLabel></MudTh>
+        }
+        @if (ColumnStatus(ColumnEnum.MyRating))
+        {
+            <MudTh><MudTableSortLabel T="BestAttemptDto" SortBy="e => e.Level + .5 + (_adjustedDifficulties[e.ChartId].MyRating?.GetAdjustment()??0)">
+                My Difficulty Adjustments
+            </MudTableSortLabel></MudTh>
+        }
+        @if (ColumnStatus(ColumnEnum.Video))
+        {
+            <MudTh>Video</MudTh>
+        }
+        @if (ColumnStatus(ColumnEnum.Grade))
+        {
+            <MudTh><MudTableSortLabel T="BestAttemptDto" SortBy="e => e.LetterGrade">Letter</MudTableSortLabel></MudTh>
+        }
+        @if (ColumnStatus(ColumnEnum.Broken))
+        {
+            
+            <MudTh><MudTableSortLabel T="BestAttemptDto" SortBy="e => e.IsBroken">Broken</MudTableSortLabel></MudTh>
+        }
+        @if (ColumnStatus(ColumnEnum.Score))
+        {
+            <MudTh><MudTableSortLabel T="BestAttemptDto" SortBy="e => e.Score">Score</MudTableSortLabel></MudTh>
+        }
+        @if (ColumnStatus(ColumnEnum.RecordedOn))
+        {
+            <MudTh><MudTableSortLabel T="BestAttemptDto" SortBy="e=>e.RecordedOn">Recorded On</MudTableSortLabel></MudTh>
+        }
+        @if (CurrentUser.IsLoggedIn && ColumnStatus(ColumnEnum.Actions))
+        {
+            <MudTh>
+                Actions
+            </MudTh>
+        }
+    </HeaderContent>
+    <RowTemplate>
+        @if (ColumnStatus(ColumnEnum.Difficulty))
+        {
+            
+            <MudTd>
+                <MudTooltip Text="@context.DifficultyShorthand">
+                    <MudImage Src="@context.DifficultyBubblePath" Height="35" Alt="@context.DifficultyShorthand" ObjectFit="ObjectFit.ScaleDown"></MudImage>
+                </MudTooltip>
+            </MudTd>
+        }
+        @if (ColumnStatus(ColumnEnum.SongImage))
+        {
+            
+            <MudTd>
+                <MudTooltip Text="@context.SongName">
+                    <MudImage Src="@context.ImagePath" Height="35" Alt="@context.SongName" Elevation="25" ObjectFit="ObjectFit.ScaleDown"/>
+                </MudTooltip>
+            </MudTd>
+        }
+        @if (ColumnStatus(ColumnEnum.SongName))
+        {
+            
+            <MudTd>
+                <MudText>@context.SongName</MudText>
+            </MudTd>
+        }
+        @if (ColumnStatus(ColumnEnum.AdjustedRating))
+        {
+            <MudTd>
+                @if (context.ChartType != ChartType.CoOp.ToString())
+                {
+                    <MudTooltip Text="@CountText(_adjustedDifficulties[@context.ChartId].RatingCount)">
+                        <MudText>@($"{@_adjustedDifficulties[@context.ChartId].Difficulty:N2}")</MudText>
+                    </MudTooltip>
+                }
+            </MudTd>
+        }
+        @if (ColumnStatus(ColumnEnum.RatingCount))
+        {
+            <MudTd>
+                <MudText>@_adjustedDifficulties[context.ChartId].RatingCount</MudText>
+            </MudTd>
+        }
+        @if (ColumnStatus(ColumnEnum.StandardDeviation))
+        {
+            <MudTd>
+                <MudText>@_adjustedDifficulties[context.ChartId].StandardDeviation</MudText>
+            </MudTd>
+        }
+        @if (ColumnStatus(ColumnEnum.MyRating))
+        {
+            <MudTh>
+                
+                @if (context.ChartType != ChartType.CoOp.ToString())
+                {
+                    <MudSelect Label="My Difficulty" T="int?" Value="@_adjustedDifficulties[@context.ChartId].MyRating?.GetScale()" ValueChanged="@(r => UpdateDifficultyRating(context.ChartId, r))">
+                        @foreach (var rating in Enum.GetValues<DifficultyAdjustment>())
+                        {
+                            <MudSelectItem T="int?" Value="@rating.GetScale()">@rating.GetDescription()</MudSelectItem>
+                        }
+                    </MudSelect>
+                }
+            </MudTh>
+        }
+        @if (ColumnStatus(ColumnEnum.Video))
+        {
+            <MudTd>
+                @if (!string.IsNullOrWhiteSpace(context.VideoUrl))
+                {
+                    <MudTooltip Text="Open Embeded Video">
+                        <MudIconButton Icon="@Icons.Custom.Brands.YouTube" OnClick="()=>ShowVideo(context.VideoUrl)"></MudIconButton>
+                    </MudTooltip>
+                }
+                else
+                {
+                    <MudTooltip Text="Open Youtube Search for Chart">
+                        <MudIconButton Icon="@Icons.Filled.Search" Href="@ChartSearch(context)" Target="_blank"></MudIconButton>
+                    </MudTooltip>
+                }
+            </MudTd>
+        }
+
+        @if (ColumnStatus(ColumnEnum.Grade))
+        {
+            
+            <MudTd>
+                @if (CanEdit)
+                {
+                    
+                    <MudSelect T="string" Value="@context.LetterGrade" ValueChanged="@(newValue => SetLetter(context, newValue))" Clearable="true" Margin="@Margin.Dense">
+                        @foreach (var letterGrade in Enum.GetValues<LetterGrade>())
+                        {
+                            <MudSelectItem Value="@letterGrade.ToString()">@letterGrade.ToString()</MudSelectItem>
+                        }
+                    </MudSelect>
+                }
+                else
+                {
+                    <MudText>@context.LetterGrade</MudText>
+                }
+            </MudTd>
+        }
+        @if (ColumnStatus(ColumnEnum.Broken))
+        {
+            <MudTd>
+                @if (CanEdit)
+                {
+                    <MudCheckBox T="bool" Checked="context.IsBroken" CheckedChanged="@(newValue => SetBroken(context, newValue))" Margin="@Margin.Dense"></MudCheckBox>
+                }
+                else
+                {
+                    <MudText>@(context.IsBroken?"Broken":"Passed")</MudText>
+                }
+            </MudTd>
+        }
+        @if (ColumnStatus(ColumnEnum.Score))
+        {
+            <MudTd>
+                @if (CanEdit)
+                {
+                    <MudNumericField T="int?" Label="Score" Value="context.Score" ValueChanged="@(newValue => SetScore(context, newValue))" Min="Score.Min" Max="Score.Max" Variant="Variant.Text" Clearable="true"></MudNumericField>
+                }
+                else
+                {
+                    <MudText>@context.Score</MudText>
+                }
+                
+            </MudTd>
+        }
+        @if (ColumnStatus(ColumnEnum.RecordedOn))
+        {
+            <MudTd>
+                <MudTooltip Text="@context.RecordedOn?.ToString("MMM dd yyyy")">@context.RecordedOn?.ToString("MM/dd/yyyy")</MudTooltip>
+            </MudTd>
+        }
+        @if (CurrentUser.IsLoggedIn && ColumnStatus(ColumnEnum.Actions))
+        {
+            <MudTh>
+                <MudMenu Icon="@Icons.Material.Filled.MoreVert">
+                    @if (_favoriteCharts.Contains(context.ChartId))
+                    {
+                        <MudMenuItem>
+                            <MudTooltip Text="Remove from Favorites">
+                                <MudIconButton Icon="@Icons.Material.Filled.Favorite" Color="Color.Secondary" OnClick="()=>RemoveFromFavorites(context.ChartId)"></MudIconButton>
+                            </MudTooltip>
+                        </MudMenuItem>
+                    }
+                    else
+                    {
+                        <MudMenuItem>
+                            <MudTooltip Text="Add to Favorites">
+                                <MudIconButton Icon="@Icons.Material.Outlined.Favorite" OnClick="()=>AddToFavorites(context.ChartId)"></MudIconButton>
+                            </MudTooltip>
+                        </MudMenuItem>
+                    }
+                    @if(_todoCharts.Contains(context.ChartId))
+                    {
+                    <MudMenuItem>
+                        <MudTooltip Text="Remove from To Do List">
+                            <MudIconButton Icon="@Icons.Material.Filled.ListAlt" Color="Color.Secondary" OnClick="()=>RemoveFromToDo(context.ChartId)"></MudIconButton>
+                        </MudTooltip>
+                    </MudMenuItem>
+                    }
+                    else
+                    {
+                    <MudMenuItem>
+                        <MudTooltip Text="Add to To Do List">
+                            <MudIconButton Icon="@Icons.Material.Outlined.ListAlt" OnClick="()=>AddToToDo(context.ChartId)"></MudIconButton>
+                        </MudTooltip>
+                    </MudMenuItem>
+                    }
+                </MudMenu>
+            </MudTh>
+        }
+    </RowTemplate>
+    <PagerContent>
+        <MudTablePager></MudTablePager>
+    </PagerContent>
+</MudTable>
+<MudDialog @bind-IsVisible="_showVideoDialog">
+    <DialogContent>
+        <iframe
+            class="video"
+            id="chartVideoFrame"
+            src="@(_currentVideo + "?autoplay=1")"
+            allow="autoplay; encrypted-media"
+            allowfullscreen></iframe>
+    </DialogContent>
+
+    <DialogActions>
+        <MudSpacer></MudSpacer>
+        <MudTooltip Text="Report Low Quality, Broken, or Incorrect Video">
+            <MudButton Href="mailto:sharkingbird@gmail.com" Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Filled.Report">Report Video</MudButton>
+        </MudTooltip>
+        <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Filled.Close" OnClick="()=>_showVideoDialog=false">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+<MudDialog @bind-IsVisible="_showShareDialog">
+    <DialogContent>
+        <MudText>Use this link to share your chart list to other players.</MudText>
+        <br/>
+        <MudTextField Value="@ShareUrl" Label="Share Url" Variant="Variant.Outlined" Margin="Margin.Dense" ReadOnly="true"/>
+    </DialogContent>
+    <DialogActions>
+        <MudSpacer></MudSpacer>
+        <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Filled.ContentCopy" OnClick="CopyShareLink">Copy To Clipboard</MudButton>
+        <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Filled.Close" OnClick="()=>_showShareDialog=false">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+<MudDialog @bind-IsVisible="_showNotificationDialog">
+    <DialogContent>
+        <MudText>Hiya! DrMurloc here!<br/> <br />To cut down on screen bloat, I moved the filters into a menu.<br/><br /> I'll keep track of the filters you use so you don't need to re-toggle your favorites on every time!<br /><br />Look for the <MudIcon Icon="@Icons.Material.Filled.FilterList"></MudIcon> icon! <br /><br />Stay awesome friend!</MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudSpacer></MudSpacer>
+        <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Filled.Close" OnClick="() => _showNotificationDialog = false">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+@inject IMediator Mediator
+@inject NavigationManager NavManager
+@inject ICurrentUserAccessor CurrentUser;
+@inject ISnackbar Snackbar;
+@inject IJSRuntime Javascript;
+@code {
+    private bool _showShareDialog;
+    private string _currentVideo = "";
+    private bool _showVideoDialog;
+    private bool _showNotificationDialog = false;
+    [Parameter]
+    public Guid? RequestedUserId { get => _requestedUserId;
+        set => _requestedUserId = value ?? (CurrentUser.IsLoggedIn ? CurrentUser.User.Id : null);
+    }
+
+    private Guid? _requestedUserId;
+    private bool CanEdit => CurrentUser.IsLoggedIn && CurrentUser.User.Id == RequestedUserId;
+    private string ShareUrl => CurrentUser.IsLoggedIn ? $"{NavManager.BaseUri}{CurrentUser.User.Id}/Charts" : string.Empty;
+    private BestAttemptDto[] _charts = Array.Empty<BestAttemptDto>();
+    private IDictionary<Guid, ChartDifficultyRatingRecord> _adjustedDifficulties = new Dictionary<Guid, ChartDifficultyRatingRecord>();
+
+
+    private bool _isLoading = true;
+
+    [Parameter] [SupplyParameterFromQuery(Name = nameof(FilterEnum.Difficulty))] public int? DifficultyFilter { get; set; }
+
+    private void DifficultyFilterChanged(int? difficulty)
+    {
+        DifficultyFilter = difficulty;
+        NavManager.NavigateTo(NavManager.GetUriWithQueryParameter(nameof(FilterEnum.Difficulty),difficulty));
+    }
+    [Parameter] [SupplyParameterFromQuery(Name=nameof(FilterEnum.ChartType))] public string? ChartTypeFilter { get; set; }
+
+    private void ChartTypeFilterChanged(string? chartType)
+    {
+        ChartTypeFilter = chartType;
+        
+        NavManager.NavigateTo(NavManager.GetUriWithQueryParameter(nameof(FilterEnum.ChartType),chartType));
+    }
+
+    [Parameter]
+    [SupplyParameterFromQuery(Name = nameof(FilterEnum.ScoreState))]
+    public string? ScoreStateFilterString
+    {
+        get => _scoreStateFilter?.ToString();
+        set => _scoreStateFilter =value==null?null: (Enum.TryParse<ScoreState>(value,out var v)?v:null);
+    }
+
+    private ScoreState? _scoreStateFilter;
+    private void ScoreStateFilterChanged(ScoreState? scoreState)
+    {
+            
+        NavManager.NavigateTo(NavManager.GetUriWithQueryParameter(nameof(FilterEnum.ScoreState),scoreState?.ToString()));
+        
+    }
+    [Parameter] [SupplyParameterFromQuery(Name=nameof(FilterEnum.SavedCharts))] public string? ChartListsFilterString {
+        get => _chartListsFilter == null ? null : string.Join(',', _chartListsFilter);
+        set => _chartListsFilter = value?.Split(',');
+    }
+    
+    private IEnumerable<string>? _chartListsFilter { get; set; }
+    private void ChartListFilterChanged(IEnumerable<string>? chartLists)
+    {
+        _chartListsFilter = chartLists ?? Array.Empty<string>();
+
+        NavManager.NavigateTo(NavManager.GetUriWithQueryParameter(nameof(FilterEnum.SavedCharts), _chartListsFilter.Any() ? string.Join(',', _chartListsFilter) : null));
+    }
+    [Parameter] [SupplyParameterFromQuery(Name=nameof(FilterEnum.SongName))] public string? SongNameFilter { get; set; }
+    private void SongNameFilterChanged(string? songName)
+    {
+        SongNameFilter=songName;
+        
+        NavManager.NavigateTo(NavManager.GetUriWithQueryParameter(nameof(FilterEnum.SongName),string.IsNullOrWhiteSpace(songName)?null:songName));
+    }
+    
+    private IDictionary<string, string> _uiSettings = new Dictionary<string, string>();
+
+    private IEnumerable<BestAttemptDto> FileredCharts => _charts.Where(FilterChart);
+    private ISet<Guid> _favoriteCharts = new HashSet<Guid>();
+    private ISet<Guid> _todoCharts = new HashSet<Guid>();
+    private IEnumerable<string> _songNames = Array.Empty<string>();
+    private int NotGradedCount => FileredCharts.Count(c => string.IsNullOrWhiteSpace(c.LetterGrade));
+    private int NotPassedCount => FileredCharts.Count(c => c.IsBroken);
+    private int PassedCount => FileredCharts.Count(c => !string.IsNullOrWhiteSpace(c.LetterGrade) && !c.IsBroken);
+    private string CountText(int count) => $"{count} votes";
+    
+    private async Task SetScoreStateFilter(ScoreState state)
+    {
+        ScoreStateFilterChanged(state);
+        await ToggleFilter(FilterEnum.ScoreState, true);
+
+    }
+    private bool FilterChart(BestAttemptDto chart)
+    {
+        var result = true;
+        if (!string.IsNullOrWhiteSpace(SongNameFilter))
+        {
+            result = result && chart.SongName.Equals(SongNameFilter.Trim(), StringComparison.OrdinalIgnoreCase);
+        }
+        if (_chartListsFilter?.Any()??false)
+        {
+            result = result && ((_chartListsFilter.Contains(ChartListType.Favorite.ToString()) && _favoriteCharts.Contains(chart.ChartId)) || (_chartListsFilter.Contains(ChartListType.ToDo.ToString()) && _todoCharts.Contains(chart.ChartId)));
+        }
+        if (DifficultyFilter != null)
+        {
+            result = result && (chart.Level == DifficultyFilter.Value && chart.ChartType != ChartType.CoOp.ToString());
+        }
+        if (!string.IsNullOrWhiteSpace(ChartTypeFilter))
+        {
+            result = result && chart.ChartType == ChartTypeFilter;
+        }
+        if (_scoreStateFilter != null)
+        {
+            result = _scoreStateFilter.Value switch
+            {
+                ScoreState.NotPassed => result && chart.IsBroken,
+                ScoreState.Passed => result && !string.IsNullOrWhiteSpace(chart.LetterGrade) && !chart.IsBroken,
+                ScoreState.Ungraded => result && string.IsNullOrWhiteSpace(chart.LetterGrade),
+                _ => result
+                };
+        }
+        return result;
+    }
+
+    private async Task RemoveFromToDo(Guid chartId)
+    {
+        await Mediator.Send(new RemoveChartFromListCommand(ChartListType.ToDo, chartId));
+        _todoCharts.Remove(chartId);
+        
+        Snackbar.Add("Chart removed from To Do list", Severity.Success);
+    }
+    private async Task AddToToDo(Guid chartId)
+    {
+        await Mediator.Send(new SaveChartToListCommand(ChartListType.ToDo, chartId));
+        if (!_todoCharts.Contains(chartId))
+        {
+            _todoCharts.Add(chartId);
+        }
+        Snackbar.Add("Chart added to To Do list", Severity.Success);
+    }
+    private async Task RemoveFromFavorites(Guid chartId)
+    {
+        await Mediator.Send(new RemoveChartFromListCommand(ChartListType.Favorite, chartId));
+        _favoriteCharts.Remove(chartId);
+        Snackbar.Add("Chart removed from Favorites", Severity.Success);
+    }
+    private async Task AddToFavorites(Guid chartId)
+    {
+        await Mediator.Send(new SaveChartToListCommand(ChartListType.Favorite, chartId));
+        if (!_favoriteCharts.Contains(chartId))
+        {
+            _favoriteCharts.Add(chartId);
+        }
+        Snackbar.Add("Chart added to Favorites", Severity.Success);
+    }
+    private string ChartSearch(BestAttemptDto dto)
+    {
+        var searchString = "Pump It Up "+dto.SongName+" "+dto.DifficultyShorthand;
+        return $"https://www.youtube.com/results?search_query={searchString.Replace("%","Percent ").Replace(" ", "+")}";
+    }
+    private void ShowVideo(string url)
+    {
+        _currentVideo = url;
+        _showVideoDialog = true;
+    }
+    private async Task CopyShareLink()
+    {
+        await Javascript.InvokeVoidAsync("navigator.clipboard.writeText", ShareUrl);
+        Snackbar.Add("Copied to clipboard!", Severity.Success);
+    }
+
+    private async Task LoadCharts(Guid? userId)
+    {
+        _isLoading = true;
+
+        var charts = (await Mediator.Send(new GetChartsQuery())).ToArray();
+        
+        var bestAttempts = userId == null ? new Dictionary<Guid, ChartAttempt>() :
+            (await Mediator.Send(new GetBestChartAttemptsQuery(userId.Value))).Where(b=>b.BestAttempt!=null)
+                .ToDictionary(b => b.Chart.Id,b=>(ChartAttempt)b.BestAttempt!);
+            
+        _charts = charts.Select(c => new BestAttemptDto
+        {
+            ChartId = c.Id,
+            Category = c.Type == Domain.Enums.ChartType.CoOp
+                ? nameof(Domain.Enums.ChartType.CoOp) + " x" + c.PlayerCount
+                : c.Type.ToString(),
+            IsBroken = !bestAttempts.ContainsKey(c.Id) || bestAttempts[c.Id].IsBroken,
+            LetterGrade = bestAttempts.ContainsKey(c.Id) ? bestAttempts[c.Id].LetterGrade.ToString() : string.Empty,
+            SongName = c.Song.Name,
+            Level = c.Level,
+            ChartType = c.Type.ToString(),
+            ImagePath = c.Song.ImagePath.ToString(),
+            DifficultyShorthand = DifficultyLevel.ToShorthand(c.Type, c.Level),
+            Score = bestAttempts.ContainsKey(c.Id) ? bestAttempts[c.Id].Score : null,
+            RecordedOn = bestAttempts.ContainsKey(c.Id) ? bestAttempts[c.Id].RecordedOn : null
+        }).ToArray();
+
+        var ratings = await Mediator.Send(new GetChartRatingsQuery());
+        _adjustedDifficulties = ratings.ToDictionary(r => r.ChartId);
+        foreach (var chart in _charts)
+        {
+            if (!_adjustedDifficulties.ContainsKey(chart.ChartId))
+            {
+                _adjustedDifficulties[chart.ChartId] = new ChartDifficultyRatingRecord(chart.ChartId, chart.Level + .5, 0,0);
+            }
+        }
+        var videos = (await Mediator.Send(new GetChartVideosQuery())).ToDictionary(cv => cv.ChartId);
+        foreach (var chart in _charts.Where(c=>videos.ContainsKey(c.ChartId)))
+        {
+            chart.VideoUrl = videos[chart.ChartId].VideoUrl.ToString();
+        }
+        _songNames = charts.Select(c => c.Song.Name).Distinct().Select(n=>n.ToString()).OrderBy(n=>n).ToArray();
+        _isLoading = false;
+    }
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCharts(RequestedUserId);
+        if (CurrentUser.IsLoggedIn)
+        {
+            var chartSaves = (await Mediator.Send(new GetSavedChartsQuery())).ToArray();
+            _favoriteCharts = chartSaves.Where(cs => cs.ListType is ChartListType.Favorite).Select(cs => cs.ChartId).Distinct().ToHashSet();
+            
+            _todoCharts = chartSaves.Where(cs => cs.ListType is ChartListType.ToDo).Select(cs => cs.ChartId).Distinct().ToHashSet();
+
+            _uiSettings = await Mediator.Send(new GetUserUiSettingsQuery());
+            if (!_uiSettings.ContainsKey("Charts__FilterListNotification__Seen"))
+            {
+                _showNotificationDialog = true;
+                await Mediator.Send(new SaveUserUiSettingCommand("Charts__FilterListNotification__Seen", true.ToString()));
+            }
+        }
+        foreach (var filter in Enum.GetValues<FilterEnum>())
+        {
+            var settingName = FilterSettingName(filter);
+            if (_uiSettings.ContainsKey(settingName)) continue;
+
+            _uiSettings[settingName] = DefaultFilters.Contains(filter).ToString();
+            if (CurrentUser.IsLoggedIn)
+            {
+                await Mediator.Send(new SaveUserUiSettingCommand(settingName,true.ToString()));
+            }
+        }
+        foreach (var column in Enum.GetValues<ColumnEnum>())
+        {
+            var settingName = ColumnSettingName(column);
+
+            if (_uiSettings.ContainsKey(settingName)) continue;
+
+
+            _uiSettings[settingName] = CurrentUser.IsLoggedIn ? DefaultLoggedInColumns.Contains(column).ToString() : DefaultNotLoggedInColumns.Contains(column).ToString();
+            if (CurrentUser.IsLoggedIn)
+            {
+                await Mediator.Send(new SaveUserUiSettingCommand(settingName, _uiSettings[settingName]));
+            }
+        }
+        
+    }
+    
+    private Task<IEnumerable<string>> SearchSongs(string? value)
+    {
+        return Task.FromResult(string.IsNullOrWhiteSpace(value)
+            ? _songNames.Select(s => s.ToString())
+            : _songNames.Where(name => name.ToString().Contains(value, StringComparison.OrdinalIgnoreCase)).Select(name => (string)name));
+    }
+
+    private async Task UpdateDifficultyRating(Guid chartId, int? scale)
+    {
+        if (scale == null)
+        {
+            return;
+        }
+        await Mediator.Send(new RateChartDifficultyCommand(chartId, DifficultyAdjustmentHelpers.From(scale.Value)));
+
+        var newRating = await Mediator.Send(new GetChartRatingQuery(chartId));
+        _adjustedDifficulties[chartId] = newRating;
+        Snackbar.Add("Suggested Difficulty Rating Submitted", Severity.Success);
+    }
+    private async Task SetScore(BestAttemptDto dto, int? newScore)
+    {
+        dto.Score = newScore;
+        if (string.IsNullOrWhiteSpace(dto.LetterGrade) && newScore != null)
+        {
+            dto.LetterGrade = LetterGrade.A.ToString();
+        }
+        await UpdateBest(dto);
+    }
+    private async Task SetBroken(BestAttemptDto dto, bool newBroken)
+    {
+        dto.IsBroken = newBroken;
+        if (string.IsNullOrWhiteSpace(dto.LetterGrade) && !newBroken)
+        {
+            dto.LetterGrade = LetterGrade.A.ToString();
+        }
+        await UpdateBest(dto);
+    }
+    private async Task SetLetter(BestAttemptDto dto, string newLetterGrade)
+    {
+        dto.LetterGrade = newLetterGrade;
+        if (string.IsNullOrWhiteSpace(newLetterGrade) && !dto.IsBroken)
+        {
+            dto.IsBroken = true;
+        }
+        await UpdateBest(dto);
+    }
+    private async Task UpdateBest(BestAttemptDto dto)
+    {
+        LetterGrade? letterGrade = Enum.TryParse<LetterGrade>(dto.LetterGrade, out var grade) ? grade : null;
+        var chartType = Enum.Parse<ChartType>(dto.ChartType);
+
+        try
+        {
+            await Mediator.Send(new UpdateBestAttemptCommand(dto.ChartId, letterGrade, dto.IsBroken, dto.Score));
+
+            dto.RecordedOn = letterGrade == null ? null : DateTimeOffset.Now;
+
+            var chartName = $"{dto.SongName} {DifficultyLevel.ToShorthand(chartType,dto.Level)}";
+
+            Snackbar.Add(letterGrade == null ? $"Removed score for {chartName}" : $"Recorded {(dto.IsBroken ? "Broken":"")} {letterGrade} for {chartName}", Severity.Success);
+        }
+        catch (Exception e)
+        {
+            Snackbar.Add("There was an error while recording the score", Severity.Error);
+        }
+
+        
+    }
+
+    private bool FilterStatus(FilterEnum filter)
+    {
+        var settingName = FilterSettingName(filter);
+        return _uiSettings.ContainsKey(settingName) && _uiSettings[settingName] == true.ToString();
+    }
+
+    private async Task ToggleFilter(FilterEnum filter, bool? newState=null)
+    {
+        var settingName = FilterSettingName(filter);
+        _uiSettings[settingName] =newState?.ToString()?? (_uiSettings[settingName] == false.ToString()).ToString();
+        if (CurrentUser.IsLoggedIn)
+        {
+            await Mediator.Send(new SaveUserUiSettingCommand(settingName, _uiSettings[settingName]));
+        }
+    }
+
+    private string FilterSettingName(FilterEnum filter) => $"Charts__Filter__{filter}";
+    private bool ColumnStatus(ColumnEnum column)
+    {
+        
+        var settingName = ColumnSettingName(column);
+        return _uiSettings.ContainsKey(settingName) && _uiSettings[settingName] == true.ToString();
+    }
+    private async Task ToggleColumn(ColumnEnum column)
+    {
+        var settingName = ColumnSettingName(column);
+        
+        _uiSettings[settingName] = (_uiSettings[settingName] == false.ToString()).ToString();
+
+        if (CurrentUser.IsLoggedIn)
+        {
+            await Mediator.Send(new SaveUserUiSettingCommand(settingName, _uiSettings[settingName]));
+        }
+    }
+    private static string ColumnSettingName(ColumnEnum column) => $"Charts__Column__{column.ToString()}";
+    private static readonly ISet<FilterEnum> DefaultFilters = new HashSet<FilterEnum>(new[] { FilterEnum.Difficulty, FilterEnum.ChartType });
+    private static readonly ISet<ColumnEnum> DefaultLoggedInColumns = new HashSet<ColumnEnum>(new[] { ColumnEnum.Difficulty, ColumnEnum.SongImage, ColumnEnum.Grade, ColumnEnum.Broken, ColumnEnum.Video, ColumnEnum.Actions });
+    private static readonly ISet<ColumnEnum> DefaultNotLoggedInColumns = new HashSet<ColumnEnum>(new[] { ColumnEnum.Difficulty, ColumnEnum.Video, ColumnEnum.AdjustedRating, ColumnEnum.SongImage });
+
+    private enum FilterEnum
+    {
+        Difficulty,
+        ChartType,
+        SongName,
+        ScoreState,
+        SavedCharts
+    }
+    private enum ColumnEnum
+    {
+        Difficulty,
+        MyRating,
+        SongImage,
+        SongName,
+        Grade,
+        Broken,
+        Score,
+        RecordedOn,
+        AdjustedRating,
+        RatingCount,
+        Actions,
+        Video,
+        StandardDeviation
+    }
+    private enum ScoreState
+    {
+        Ungraded,
+        NotPassed,
+        Passed
+    }
+}
